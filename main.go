@@ -2,19 +2,21 @@ package main
 
 import (
 	"context"
-	"github.com/gorilla/mux"
-	hclog "github.com/hashicorp/go-hclog"
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
+
+	gohandlers "github.com/gorilla/handlers"
+	"github.com/gorilla/mux"
+	hclog "github.com/hashicorp/go-hclog"
 	"product-images/files"
 	"product-images/handlers"
-	"time"
 )
 
-var bindAddress = ":9090"
+var bindAddress = ":8080"
 var logLevel = "debug"
-var basePath = "/tmp/images"
+var basePath = "./imagestore"
 
 func main() {
 
@@ -38,26 +40,35 @@ func main() {
 
 	// create the handlers
 	fh := handlers.NewFiles(stor, l)
+	mw := handlers.GzipHandler{}
 
 	// create a new serve mux and register the handlers
 	sm := mux.NewRouter()
 
+	ch := gohandlers.CORS(gohandlers.AllowedOrigins([]string{"*"}))
+
 	// filename regex: {filename:[a-zA-Z]+\\.[a-z]{3}}
 	// problem with FileServer is that it is dumb
-	ph := sm.Get(http.MethodPost).Subrouter()
-	ph.HandleFunc("/images/{id:[0-9]+}/{filename:[a-zA-Z]+\\.[a-z]{3}}", fh.ServeHTTP)
+	ph := sm.Methods(http.MethodPost).Subrouter()
+	ph.HandleFunc("/images/{id:[0-9]+}/{filename:[a-zA-Z]+\\.[a-z]{3}}", fh.UploadREST)
+	ph.HandleFunc("/", fh.UploadMultipart)
 
-	//get files
+	// get files
 	gh := sm.Methods(http.MethodGet).Subrouter()
-	gh.HandleFunc("/images/{id:[0-9]+}/{filename:[a-zA-Z]+\\.[a-z]{3}}", http.FileServer(http.Dir(basePath)))
+	gh.Handle(
+		"/images/{id:[0-9]+}/{filename:[a-zA-Z]+\\.[a-z]{3}}",
+		http.StripPrefix("/images/", http.FileServer(http.Dir(basePath))),
+	)
+
+	gh.Use(mw.GzipMiddleware)
 
 	// create a new server
 	s := http.Server{
 		Addr:         bindAddress,       // configure the bind address
-		Handler:      sm,                // set the default handler
-		ErrorLog:     sl,                // set the logger for the server
-		ReadTimeout:  5 * time.Second,   // max time to read request from the sdk
-		WriteTimeout: 10 * time.Second,  // max time to write response to the sdk
+		Handler:      ch(sm),            // set the default handler
+		ErrorLog:     sl,                // the logger for the server
+		ReadTimeout:  5 * time.Second,   // max time to read request from the client
+		WriteTimeout: 10 * time.Second,  // max time to write response to the client
 		IdleTimeout:  120 * time.Second, // max time for connections using TCP Keep-Alive
 	}
 
@@ -72,7 +83,7 @@ func main() {
 		}
 	}()
 
-	// trap sigterm or interrupt and gracefully shutdown the server
+	// trap sigterm or interupt and gracefully shutdown the server
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	signal.Notify(c, os.Kill)
@@ -84,5 +95,4 @@ func main() {
 	// gracefully shutdown the server, waiting max 30 seconds for current operations to complete
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
 	s.Shutdown(ctx)
-
 }

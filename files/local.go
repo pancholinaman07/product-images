@@ -1,20 +1,21 @@
 package files
 
 import (
-	"golang.org/x/xerrors"
 	"io"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/xerrors"
 )
 
 // Local is an implementation of the Storage interface which works with the
 // local disk on the current machine
 type Local struct {
-	maxFileSize int // maximum number of bytes for files
+	maxFileSize int // maximum numbber of bytes for files
 	basePath    string
 }
 
-// NewLocal creates a new Local filesystem with the given base path
+// NewLocal creates a new Local filesytem with the given base path
 // basePath is the base directory to save files to
 // maxSize is the max number of bytes that a file can be
 func NewLocal(basePath string, maxSize int) (*Local, error) {
@@ -26,17 +27,17 @@ func NewLocal(basePath string, maxSize int) (*Local, error) {
 	return &Local{basePath: p}, nil
 }
 
-// Save the contents of the Writer to the given path.
+// Save the contents of the Writer to the given path
 // path is a relative path, basePath will be appended
-func (l *Local) save(path string, contents io.Reader) error {
+func (l *Local) Save(path string, contents io.Reader) error {
 	// get the full path for the file
 	fp := l.fullPath(path)
 
 	// get the directory and make sure it exists
 	d := filepath.Dir(fp)
-	err := os.Mkdir(d, os.ModeDir)
+	err := os.MkdirAll(d, os.ModePerm)
 	if err != nil {
-		return xerrors.Errorf("Unable to create directory: %d", err)
+		return xerrors.Errorf("Unable to create directory: %w", err)
 	}
 
 	// if the file exists delete it
@@ -60,12 +61,31 @@ func (l *Local) save(path string, contents io.Reader) error {
 
 	// write the contents to the new file
 	// ensure that we are not writing greater than max bytes
-
 	_, err = io.Copy(f, contents)
 	if err != nil {
-		return xerrors.Errorf("Unable to write to files: %w", err)
+		return xerrors.Errorf("Unable to write to file: %w", err)
 	}
+
 	return nil
 }
 
-// Get the file at the
+// Get the file at the given path and return a Reader
+// the calling function is responsible for closing the reader
+func (l *Local) Get(path string) (*os.File, error) {
+	// get the full path for the file
+	fp := l.fullPath(path)
+
+	// open the file
+	f, err := os.Open(fp)
+	if err != nil {
+		return nil, xerrors.Errorf("Unable to open file: %w", err)
+	}
+
+	return f, nil
+}
+
+// returns the absolute path
+func (l *Local) fullPath(path string) string {
+	// append the given path to the base path
+	return filepath.Join(l.basePath, path)
+}
